@@ -17,6 +17,7 @@ export function JoinGroupScreen({colorScheme, onNavigate, onJoinGroup, onToggleC
   const [holdProgress, setHoldProgress] = useState(0)
   const [showErrorPopup, setShowErrorPopup] = useState(!!joinError)
 
+
   // Show popup when joinError changes
   useEffect(() => {
     setShowErrorPopup(!!joinError)

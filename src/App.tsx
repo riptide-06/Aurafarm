@@ -1,9 +1,10 @@
-import {useMemo, useCallback, useState} from 'react'
+import {useMemo, useCallback, useState, useEffect} from 'react'
 import {usePopularProducts} from '@shopify/shop-minis-react'
 import type {Product, Friend, FriendGroup, GiftAssignment} from './types'
 import {SAMPLE_FRIENDS, getColorClasses} from './constants'
 import {useAppState} from './hooks/useAppState'
 import {useDragDrop} from './hooks/useDragDrop'
+import {useBackendSync} from './hooks/useBackendSync'
 import {SplashScreen} from './components/SplashScreen'
 import {HomePage} from './components/HomePage'
 import {AuraFarming} from './components/AuraFarming'
@@ -16,6 +17,7 @@ import {ErrorBoundary} from './components/shared/ErrorBoundary'
 
 export function App() {
   const {products} = usePopularProducts()
+  const {createGroupWithSync, joinGroupWithSync, addPointsWithSync} = useBackendSync()
   const {
     currentScreen, setCurrentScreen,
     currentProductIndex, setCurrentProductIndex,
@@ -49,6 +51,15 @@ export function App() {
   const colors = useMemo(() => getColorClasses(colorScheme), [colorScheme])
 
   const [joinError, setJoinError] = useState<string | null>(null)
+  const [previousScreen, setPreviousScreen] = useState<Screen>('splash')
+
+  // Clear join error when navigating TO join-group screen (but not when already on it)
+  useEffect(() => {
+    if (currentScreen === 'join-group' && previousScreen !== 'join-group') {
+      setJoinError(null)
+    }
+    setPreviousScreen(currentScreen)
+  }, [currentScreen, previousScreen])
 
   const createGroup = useCallback((name: string) => {
     const newGroup: FriendGroup = {
@@ -62,7 +73,10 @@ export function App() {
     setCurrentGroup(newGroup)
     setGroupName('')
     setCurrentScreen('group-dashboard')
-  }, [userId, userStats, setFriendGroups, setCurrentGroup, setGroupName, setCurrentScreen])
+    
+    // Sync to backend in background (doesn't affect UI)
+    createGroupWithSync(name, () => {})
+  }, [userId, userStats, setFriendGroups, setCurrentGroup, setGroupName, setCurrentScreen, createGroupWithSync])
 
   const joinGroup = useCallback((code: string) => {
     // Check if already in a group with this code
@@ -92,7 +106,10 @@ export function App() {
     setGroupCode('')
     setCurrentScreen('group-dashboard')
     setJoinError(null)
-  }, [userId, userStats, friendGroups, setFriendGroups, setCurrentGroup, setGroupCode, setCurrentScreen])
+    
+    // Sync to backend in background (doesn't affect UI)
+    joinGroupWithSync(code, () => {})
+  }, [userId, userStats, friendGroups, setFriendGroups, setCurrentGroup, setGroupCode, setCurrentScreen, joinGroupWithSync])
 
   const nextProduct = useCallback(() => {
     console.log('nextProduct called, current index:', currentProductIndex, 'isInfiniteMode:', isInfiniteMode, 'dailyComplete:', userStats.dailyComplete)
@@ -200,6 +217,7 @@ export function App() {
     setCurrentScreen('home')
   }, [setCurrentScreen])
 
+
   if (currentScreen === 'splash') {
     return (
       <div className="relative">
@@ -296,7 +314,7 @@ export function App() {
           onNavigate={setCurrentScreen}
           onJoinGroup={joinGroup}
           onToggleColorScheme={() => setColorScheme(colorScheme === 'default' ? 'colorblind' : 'default')}
-          joinError={joinError} // Pass the error to the screen
+          joinError={joinError}
         />
       </div>
     )
