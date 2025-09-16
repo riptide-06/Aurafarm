@@ -501,4 +501,222 @@ router.get('/:groupId/members', authenticateToken, ...validateMongoId('groupId')
   }
 });
 
+// Get group by code (for joining)
+router.get('/code/:code', async (req, res) => {
+  try {
+    const { code } = req.params;
+    
+    const group = await Group.findByCode(code);
+    
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found'
+      });
+    }
+
+    // Return basic group info (no sensitive data)
+    res.json({
+      success: true,
+      data: {
+        group: {
+          id: group._id,
+          name: group.name,
+          description: group.description,
+          code: group.code,
+          memberCount: group.memberCount,
+          maxMembers: group.settings.maxMembers,
+          isPublic: group.settings.isPublic,
+          createdAt: group.createdAt
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get group by code error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get group'
+    });
+  }
+});
+
+// Update member role (admin only)
+router.put('/:groupId/members/:userId/role', authenticateToken, ...validateMongoId('groupId'), requireGroupAdmin, async (req, res) => {
+  try {
+    const { groupId, userId } = req.params;
+    const { role } = req.body;
+
+    if (!['admin', 'member'].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid role. Must be admin or member.'
+      });
+    }
+
+    const group = await Group.findById(groupId);
+    const member = group.members.find(
+      member => member.userId.toString() === userId.toString() && member.isActive
+    );
+
+    if (!member) {
+      return res.status(404).json({
+        success: false,
+        message: 'Member not found'
+      });
+    }
+
+    // Cannot change owner role
+    if (member.role === 'owner') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot change owner role'
+      });
+    }
+
+    await group.updateMemberRole(userId, role);
+
+    // Emit real-time event
+    const io = req.app.get('io');
+    io.to(`group-${groupId}`).emit('member-role-updated', {
+      userId,
+      newRole: role,
+      updatedBy: req.user._id
+    });
+
+    res.json({
+      success: true,
+      message: 'Member role updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Update member role error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update member role'
+    });
+  }
+});
+
+// Remove member from group (admin only)
+router.delete('/:groupId/members/:userId', authenticateToken, ...validateMongoId('groupId'), requireGroupAdmin, async (req, res) => {
+  try {
+    const { groupId, userId } = req.params;
+    const adminId = req.user._id;
+
+    const group = await Group.findById(groupId);
+    const member = group.members.find(
+      member => member.userId.toString() === userId.toString() && member.isActive
+    );
+
+    if (!member) {
+      return res.status(404).json({
+        success: false,
+        message: 'Member not found'
+      });
+    }
+
+    // Cannot remove owner
+    if (member.role === 'owner') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot remove group owner'
+      });
+    }
+
+    // Cannot remove yourself
+    if (userId === adminId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Use the leave endpoint to remove yourself'
+      });
+    }
+
+    await group.removeMember(userId);
+    
+    // Remove group from user's groups
+    const user = await User.findById(userId);
+    if (user) {
+      await user.leaveGroup(groupId);
+    }
+
+    // Emit real-time event
+    const io = req.app.get('io');
+    io.to(`group-${groupId}`).emit('member-removed', {
+      userId,
+      removedBy: adminId
+    });
+
+    res.json({
+      success: true,
+      message: 'Member removed successfully'
+    });
+
+  } catch (error) {
+    console.error('Remove member error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to remove member'
+    });
+  }
+});
+
+// Add points to group (for aura farming)
+router.post('/:groupId/points', authenticateToken, ...validateMongoId('groupId'), requireGroupMembership, async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { points, reason = 'farming' } = req.body;
+    const userId = req.user._id;
+
+    if (!points || points <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid points amount required'
+      });
+    }
+
+    const group = await Group.findById(groupId);
+    await group.addPoints(userId, points);
+
+    // Track points addition
+    await Analytics.trackEvent(
+      userId,
+      req.headers['x-session-id'] || 'unknown',
+      'group_points_added',
+      { 
+        groupId: group._id,
+        points,
+        reason
+      },
+      req.headers['user-agent'],
+      req.ip
+    );
+
+    // Emit real-time event
+    const io = req.app.get('io');
+    io.to(`group-${groupId}`).emit('points-added', {
+      userId,
+      points,
+      reason,
+      totalPoints: group.stats.totalPointsEarned
+    });
+
+    res.json({
+      success: true,
+      message: 'Points added successfully',
+      data: {
+        pointsAdded: points,
+        totalPoints: group.stats.totalPointsEarned
+      }
+    });
+
+  } catch (error) {
+    console.error('Add points error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add points'
+    });
+  }
+});
+
 module.exports = router;

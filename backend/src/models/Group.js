@@ -30,7 +30,9 @@ const groupSchema = new mongoose.Schema({
     joinedAt: { type: Date, default: Date.now },
     isActive: { type: Boolean, default: true },
     contributedPoints: { type: Number, default: 0 },
-    lastActivity: { type: Date, default: Date.now }
+    lastActivity: { type: Date, default: Date.now },
+    displayName: { type: String, trim: true },
+    avatar: { type: String, default: '👤' }
   }],
   settings: {
     isPublic: { type: Boolean, default: false },
